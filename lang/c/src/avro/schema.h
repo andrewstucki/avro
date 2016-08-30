@@ -24,6 +24,7 @@ extern "C" {
 #define CLOSE_EXTERN
 #endif
 
+#include <jansson.h>
 #include <avro/platform.h>
 #include <stdlib.h>
 
@@ -52,6 +53,8 @@ int avro_schema_record_field_append(const avro_schema_t record,
 				    const char *field_name,
 				    const avro_schema_t type);
 size_t avro_schema_record_size(const avro_schema_t record);
+json_t *avro_schema_record_field_default_get_by_index
+(const avro_schema_t record, int index);
 
 avro_schema_t avro_schema_enum(const char *name);
 avro_schema_t avro_schema_enum_ns(const char *name, const char *space);

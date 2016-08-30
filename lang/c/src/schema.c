@@ -2,17 +2,17 @@
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
- * The ASF licenses this file to you under the Apache License, Version 2.0 
+ * The ASF licenses this file to you under the Apache License, Version 2.0
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
- * 
+ *
  * http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
  * implied.  See the License for the specific language governing
- * permissions and limitations under the License. 
+ * permissions and limitations under the License.
  */
 
 #include "avro/allocation.h"
@@ -61,7 +61,7 @@ static int is_avro_id(const char *name)
 			}
 		}
 		/*
-		 * starts with [A-Za-z_] subsequent [A-Za-z0-9_] 
+		 * starts with [A-Za-z_] subsequent [A-Za-z0-9_]
 		 */
 		return 1;
 	}
@@ -92,6 +92,7 @@ static int record_free_foreach(int i, struct avro_record_field_t *field,
 
 	avro_str_free(field->name);
 	avro_schema_decref(field->type);
+  json_decref(field->default_value);
 	avro_freet(struct avro_record_field_t, field);
 	return ST_DELETE;
 }
@@ -603,6 +604,7 @@ avro_schema_record_field_append(const avro_schema_t record_schema,
 	new_field->index = record->fields->num_entries;
 	new_field->name = avro_strdup(field_name);
 	new_field->type = avro_schema_incref(field_schema);
+	new_field->default_value = NULL;
 	st_insert(record->fields, record->fields->num_entries,
 		  (st_data_t) new_field);
 	st_insert(record->fields_byname, (st_data_t) new_field->name,
@@ -715,6 +717,34 @@ avro_schema_t avro_schema_record_field_get_by_index
 	return val.field->type;
 }
 
+json_t *avro_schema_record_field_default_get_by_index
+(const avro_schema_t record, int index)
+{
+	union {
+		st_data_t data;
+		struct avro_record_field_t *field;
+	} val;
+	st_lookup(avro_schema_to_record(record)->fields, index, &val.data);
+	return val.field->default_value; /* borrowed reference */
+}
+
+
+int avro_schema_record_field_default_set_by_index
+(const avro_schema_t record, int index, json_t *dft)
+{
+	union {
+		st_data_t data;
+		struct avro_record_field_t *field;
+	} val;
+	if (st_lookup(avro_schema_to_record(record)->fields, index, &val.data)) {
+    json_incref(dft);
+    val.field->default_value = dft;
+    return 0;
+  }
+	avro_set_error("No field at index %d in record", index);
+	return -1;
+}
+
 avro_schema_t avro_schema_link(avro_schema_t to)
 {
 	if (!is_avro_named_type(to)) {
@@ -807,7 +837,7 @@ avro_type_from_json_t(json_t *json, avro_type_t *type,
 		return EINVAL;
 	}
 	/*
-	 * TODO: gperf/re2c this 
+	 * TODO: gperf/re2c this
 	 */
 	if (strcmp(type_str, "string") == 0) {
 		*type = AVRO_STRING;
@@ -952,6 +982,7 @@ avro_schema_from_json_t(json_t *json, avro_schema_t *schema,
 				    json_array_get(json_fields, i);
 				json_t *json_field_name;
 				json_t *json_field_type;
+				json_t *json_field_default;
 				avro_schema_t json_field_type_schema;
 				int field_rval;
 
@@ -974,6 +1005,7 @@ avro_schema_from_json_t(json_t *json, avro_schema_t *schema,
 					avro_schema_decref(*schema);
 					return EINVAL;
 				}
+				json_field_default = json_object_get(json_field, "default");
 				field_rval =
 				    avro_schema_from_json_t(json_field_type,
 							    &json_field_type_schema,
@@ -988,6 +1020,16 @@ avro_schema_from_json_t(json_t *json, avro_schema_t *schema,
 								    json_string_value
 								    (json_field_name),
 								    json_field_type_schema);
+				if (field_rval) {
+					avro_schema_decref(*schema);
+					return field_rval;
+				}
+        if (json_field_default) {
+          field_rval =
+              avro_schema_record_field_default_set_by_index(*schema,
+                    i,
+                    json_field_default);
+        }
 				avro_schema_decref(json_field_type_schema);
 				if (field_rval != 0) {
 					avro_schema_decref(*schema);
@@ -1276,7 +1318,7 @@ avro_schema_t avro_schema_copy(avro_schema_t schema)
 	case AVRO_BOOLEAN:
 	case AVRO_NULL:
 		/*
-		 * No need to copy primitives since they're static 
+		 * No need to copy primitives since they're static
 		 */
 		new_schema = schema;
 		break;
@@ -1388,7 +1430,7 @@ avro_schema_t avro_schema_copy(avro_schema_t schema)
 			    avro_schema_to_link(schema);
 			/*
 			 * TODO: use an avro_schema_copy of to instead of pointing to
-			 * the same reference 
+			 * the same reference
 			 */
 			avro_schema_incref(link_schema->to);
 			new_schema = avro_schema_link(link_schema->to);
